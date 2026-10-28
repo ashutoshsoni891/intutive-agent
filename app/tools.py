@@ -14,6 +14,7 @@ class TransientToolError(ToolError):
 
 
 Handler = Callable[[dict, dict], Awaitable[str]]
+NO_RATIONALE = {"finish_incident", "update_plan"}
 
 
 @dataclass
@@ -25,10 +26,12 @@ class Tool:
     requires_approval: bool = False
 
     def spec(self) -> dict:
-        return {
-            "type": "function",
-            "function": {"name": self.name, "description": self.description, "parameters": self.parameters},
-        }
+        """Schema sent to the model. Adds a rationale argument that the runtime strips before execution."""
+        params = {**self.parameters, "properties": dict(self.parameters["properties"]), "required": list(self.parameters["required"])}
+        if self.name not in NO_RATIONALE:
+            params["properties"]["rationale"] = {"type": "string", "description": "One sentence: why you are making this call"}
+            params["required"].append("rationale")
+        return {"type": "function", "function": {"name": self.name, "description": self.description, "parameters": params}}
 
 
 def _obj(props: dict, required: list[str]) -> dict:

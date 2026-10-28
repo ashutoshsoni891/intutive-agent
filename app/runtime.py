@@ -52,6 +52,11 @@ def _sig(name: str, args: dict) -> str:
     return name + json.dumps(args, sort_keys=True)
 
 
+def _strip(args: dict) -> tuple[dict, str | None]:
+    args = dict(args)
+    return args, args.pop("rationale", None)
+
+
 def _text(content) -> str:
     if isinstance(content, str):
         return content
@@ -278,7 +283,7 @@ class AgentRuntime:
             run_id, "llm_call",
             {
                 "step": state["step"] + 1,
-                "thought": _text(resp.content),
+                "thought": _text(resp.content) or "; ".join(r for c in resp.tool_calls if (r := c["args"].get("rationale"))),
                 "tool_calls": [c["name"] for c in resp.tool_calls],
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
@@ -307,7 +312,8 @@ class AgentRuntime:
         prior: dict[str, int] = {}
         for m in state["messages"]:
             for c in getattr(m, "tool_calls", None) or []:
-                prior[_sig(c["name"], c["args"])] = prior.get(_sig(c["name"], c["args"]), 0) + 1
+                key = _sig(c["name"], _strip(c["args"])[0])
+                prior[key] = prior.get(key, 0) + 1
 
         results: dict[str, str] = {}
         runnable, gated, finish = [], [], None
@@ -320,7 +326,8 @@ class AgentRuntime:
 
         for call in last.tool_calls:
             tool = TOOLS.get(call["name"])
-            args = call["args"]
+            args, rationale = _strip(call["args"])
+            call = {**call, "rationale": rationale}
             err = None
             if tool is None:
                 err = f"unknown tool '{call['name']}'. Available: {', '.join(TOOLS)}"
@@ -342,17 +349,17 @@ class AgentRuntime:
             else:
                 runnable.append((call, tool, args))
 
-        outputs = await asyncio.gather(*(self._call_tool(run_id, world, c["id"], c["name"], t, a) for c, t, a in runnable))
+        outputs = await asyncio.gather(*(self._call_tool(run_id, world, c["id"], c["name"], t, a, c["rationale"]) for c, t, a in runnable))
         for (call, _, _), out in zip(runnable, outputs):
             results[call["id"]] = out
 
         pending = []
         for call, tool, args in gated:
             approval = self.store.create_approval(run_id, call["id"], call["name"], args)
-            pending.append({"approval_id": approval["id"], "call_id": call["id"], "tool": call["name"], "args": args})
+            pending.append({"approval_id": approval["id"], "call_id": call["id"], "tool": call["name"], "args": args, "rationale": call["rationale"]})
             self.store.add_event(
                 run_id, "approval_requested",
-                {"approval_id": approval["id"], "tool": call["name"], "args": args, "rationale": _text(last.content)},
+                {"approval_id": approval["id"], "tool": call["name"], "args": args, "rationale": call["rationale"] or _text(last.content)},
             )
 
         if finish and pending:
@@ -373,7 +380,7 @@ class AgentRuntime:
         for p in state["pending"]:
             decision = decisions[p["approval_id"]]
             if decision["approved"]:
-                content = await self._call_tool(run_id, world, p["call_id"], p["tool"], TOOLS[p["tool"]], p["args"])
+                content = await self._call_tool(run_id, world, p["call_id"], p["tool"], TOOLS[p["tool"]], p["args"], p.get("rationale"))
             else:
                 reason = decision["reason"] or "no reason given"
                 content = f"REJECTED by operator: {reason}. Do not retry this action; propose an alternative or finish."
@@ -386,8 +393,8 @@ class AgentRuntime:
         self._finish(self._run_id(config), state["world"], state["finish"])
         return {}
 
-    async def _call_tool(self, run_id: str, world: dict, call_id: str, name: str, tool, args: dict) -> str:
-        self.store.add_event(run_id, "tool_call", {"call_id": call_id, "tool": name, "args": args})
+    async def _call_tool(self, run_id: str, world: dict, call_id: str, name: str, tool, args: dict, rationale: str | None = None) -> str:
+        self.store.add_event(run_id, "tool_call", {"call_id": call_id, "tool": name, "args": args, "rationale": rationale})
         started = time.monotonic()
         out = None
         for attempt in range(1, self.s.tool_max_attempts + 1):
@@ -423,7 +430,7 @@ class AgentRuntime:
         result = {
             "root_cause": args["root_cause"],
             "confidence": confidence,
-            "actions_taken": args.get("actions_taken", []),
+            "actions_taken": args.get("actions_taken") or [f"{a['tool']}({json.dumps(a['args'])})" for a in world["state"]["actions"]],
             "summary": args["summary"],
             "service_recovered": world["state"]["fixed"],
         }

@@ -183,7 +183,8 @@ function renderEvent(ev) {
         d.thought || "(no reasoning text)",
         d.tool_calls.length ? "→ " + d.tool_calls.join(", ") : "→ no tool call"
       );
-    case "tool_call": return card("tool_call", `${time} · tool call`, d.tool, JSON.stringify(d.args));
+    case "tool_call": return card("tool_call", `${time} · tool call`, d.tool, JSON.stringify(d.args) + (d.rationale ? `
+why: ${d.rationale}` : ""));
     case "tool_result":
       return card(
         d.is_error ? "error" : "tool_result",
