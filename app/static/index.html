@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Incident Triage Agent</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<aside>
+  <h1>Triage Agent</h1>
+  <div id="llm" class="muted"></div>
+  <form id="new-run">
+    <label>Scenario</label>
+    <select id="scenario"></select>
+    <p id="alert" class="muted"></p>
+    <label>Operator goal (optional)</label>
+    <input id="goal" placeholder="Find root cause and restore service safely">
+    <button type="submit">Start investigation</button>
+  </form>
+  <h2>Runs</h2>
+  <ul id="runs"></ul>
+  <h2>Long-term memory</h2>
+  <ul id="memories" class="muted"></ul>
+</aside>
+<main>
+  <div id="empty" class="muted">Start or select a run.</div>
+  <section id="run" hidden>
+    <header>
+      <div>
+        <span id="status" class="badge"></span>
+        <strong id="title"></strong>
+      </div>
+      <div class="controls">
+        <button id="pause">Pause</button>
+        <button id="resume">Resume</button>
+        <button id="cancel" class="danger">Cancel</button>
+      </div>
+    </header>
+    <div class="stats" id="stats"></div>
+    <div class="grid">
+      <div>
+        <h2>Plan</h2>
+        <ol id="plan" class="plan"></ol>
+        <h2>Actions applied</h2>
+        <ul id="actions"></ul>
+        <div id="result"></div>
+      </div>
+      <div>
+        <div id="approvals"></div>
+        <form id="say">
+          <input id="say-text" placeholder="Send guidance to the agent (read at its next step)">
+          <button type="submit">Send</button>
+        </form>
+        <h2>Timeline</h2>
+        <div id="timeline"></div>
+      </div>
+    </div>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
