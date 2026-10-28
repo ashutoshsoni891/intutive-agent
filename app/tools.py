@@ -63,7 +63,12 @@ async def search_logs(world: dict, args: dict) -> str:
         lines = [l for l in lines if query in l["msg"].lower()]
     lines = sorted(lines, key=lambda l: l["t"])[-limit:]
     if not lines:
-        return "no matching log lines"
+        all_lines = world["data"]["logs"].get(service, [])
+        counts = ", ".join(f"{lv}={sum(1 for l in all_lines if l['level'] == lv)}" for lv in ("ERROR", "WARN", "INFO"))
+        return (
+            f"no matching log lines ({len(all_lines)} lines in window: {counts}). "
+            "The query is a substring match on the message text; retry with only a level filter or a shorter term."
+        )
     return "\n".join(f"[{_fmt_age(l['t'])}] {l['level']} {l['msg']}" for l in lines)
 
 
@@ -172,7 +177,7 @@ TOOLS: dict[str, Tool] = {
         ),
         Tool(
             "search_logs",
-            "Search recent logs of a service. Filter by level (ERROR/WARN/INFO) or substring. Returns newest lines last.",
+            "Search recent logs of a service. Filter by level (ERROR/WARN/INFO) and/or a case-insensitive substring of the message. Start with a level filter and no query; narrow only if output is large. Returns newest lines last.",
             _obj(
                 {
                     "service": SERVICE,
