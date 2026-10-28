@@ -45,7 +45,7 @@ async function init() {
     await api(`/runs/${currentId}/message`, { method: "POST", body: { text } });
     $("say-text").value = "";
   };
-  setInterval(loadSidebar, 3000);
+  setInterval(() => loadSidebar().catch(() => {}), 3000);
   loadSidebar();
 }
 
@@ -75,6 +75,7 @@ function select(id) {
   refreshRun();
   source = new EventSource(`/api/runs/${id}/stream`);
   const handle = (msg) => {
+    if (!msg.data) return;
     const ev = JSON.parse(msg.data);
     $("timeline").prepend(renderEvent(ev));
     clearTimeout(refreshTimer);
@@ -95,6 +96,7 @@ async function refreshRun() {
   if (!currentId) return;
   const run = await api(`/runs/${currentId}`);
   renderRun(run);
+  loadSidebar().catch(() => {});
 }
 
 function stat(label, value) {
