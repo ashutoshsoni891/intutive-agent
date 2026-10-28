@@ -20,12 +20,6 @@ create table if not exists runs(
     created_at real not null,
     updated_at real not null
 );
-create table if not exists messages(
-    run_id text not null,
-    seq integer not null,
-    body text not null,
-    primary key(run_id, seq)
-);
 create table if not exists events(
     id integer primary key autoincrement,
     run_id text not null,
@@ -120,28 +114,6 @@ class Store:
                 "update runs set prompt_tokens=prompt_tokens+?, completion_tokens=completion_tokens+?, "
                 "llm_ms=llm_ms+?, updated_at=? where id=?",
                 (prompt, completion, ms, time.time(), run_id),
-            )
-
-    def messages(self, run_id: str) -> list[dict]:
-        rows = self.db.execute("select body from messages where run_id=? order by seq", (run_id,)).fetchall()
-        return [json.loads(r["body"]) for r in rows]
-
-    def append_messages(self, run_id: str, msgs: list[dict]):
-        with self.db:
-            start = self.db.execute(
-                "select coalesce(max(seq),-1)+1 from messages where run_id=?", (run_id,)
-            ).fetchone()[0]
-            self.db.executemany(
-                "insert into messages(run_id,seq,body) values(?,?,?)",
-                [(run_id, start + i, json.dumps(m)) for i, m in enumerate(msgs)],
-            )
-
-    def replace_messages(self, run_id: str, msgs: list[dict]):
-        with self.db:
-            self.db.execute("delete from messages where run_id=?", (run_id,))
-            self.db.executemany(
-                "insert into messages(run_id,seq,body) values(?,?,?)",
-                [(run_id, i, json.dumps(m)) for i, m in enumerate(msgs)],
             )
 
     def add_event(self, run_id: str, type_: str, data: dict) -> int:

@@ -40,10 +40,10 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
         store = Store(settings.db_path)
         runtime = AgentRuntime(store, llm or build_llm(settings), settings)
         app.state.store, app.state.runtime = store, runtime
+        await runtime.start()
         runtime.recover()
         yield
-        for task in runtime.tasks.values():
-            task.cancel()
+        await runtime.stop()
         store.close()
 
     app = FastAPI(title="Incident Triage Agent", lifespan=lifespan)

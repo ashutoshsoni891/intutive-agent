@@ -1,6 +1,8 @@
 import json
 import re
 
+from langchain_core.messages import BaseMessage, HumanMessage, RemoveMessage, SystemMessage
+
 SECRET_PATTERNS = [
     (re.compile(r"\b(sk|pk|rk)-[A-Za-z0-9_-]{10,}"), "[REDACTED_KEY]"),
     (re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\s*[=:]\s*\S+"), r"\1=[REDACTED]"),
@@ -15,8 +17,12 @@ def redact(text: str) -> str:
     return text
 
 
-def estimate_tokens(messages: list[dict]) -> int:
-    return sum(len(json.dumps(m)) for m in messages) // 4
+def _size(m: BaseMessage) -> int:
+    return len(str(m.content)) + len(json.dumps(getattr(m, "tool_calls", None) or []))
+
+
+def estimate_tokens(messages: list[BaseMessage]) -> int:
+    return sum(_size(m) for m in messages) // 4
 
 
 def truncate_output(text: str, limit: int) -> str:
@@ -31,24 +37,22 @@ def wrap_untrusted(tool: str, text: str) -> str:
     return f"<tool_output name=\"{tool}\" trust=\"untrusted-data\">\n{text}\n</tool_output>"
 
 
-def _split_for_compaction(messages: list[dict], keep_recent: int) -> int:
+def _split_for_compaction(messages: list[BaseMessage], keep_recent: int) -> int:
     """Index where the kept tail starts. Never splits an assistant tool-call from its tool results."""
     cut = max(1, len(messages) - keep_recent)
-    while cut < len(messages) and messages[cut]["role"] == "tool":
+    while cut < len(messages) and messages[cut].type == "tool":
         cut += 1
     return cut
 
 
-def render_for_summary(messages: list[dict]) -> str:
+def render_for_summary(messages: list[BaseMessage]) -> str:
     lines = []
     for m in messages:
-        if m["role"] == "assistant":
-            calls = ", ".join(
-                f"{c['function']['name']}({c['function']['arguments']})" for c in m.get("tool_calls", [])
-            )
-            lines.append(f"assistant: {m.get('content', '')} {calls}".strip())
+        if m.type == "ai":
+            calls = ", ".join(f"{c['name']}({json.dumps(c['args'])})" for c in m.tool_calls)
+            lines.append(f"assistant: {m.content} {calls}".strip())
         else:
-            lines.append(f"{m['role']}: {m.get('content', '')[:600]}")
+            lines.append(f"{m.type}: {str(m.content)[:600]}")
     return "\n".join(lines)
 
 
@@ -59,8 +63,12 @@ SUMMARY_PROMPT = (
 )
 
 
-async def compact(messages: list[dict], llm, keep_recent: int) -> tuple[list[dict], dict] | None:
-    """Replace the middle of the transcript with a summary. The first message (the alert) is always kept."""
+async def compact(messages: list[BaseMessage], llm, keep_recent: int) -> tuple[list[BaseMessage], dict] | None:
+    """Replace the middle of the transcript with a summary. The first message (the alert) is always kept.
+
+    Returns graph state updates: removals for everything after the first message, then the summary and the
+    kept tail re-added in order (the add_messages reducer appends, so the tail has to be re-added).
+    """
     cut = _split_for_compaction(messages, keep_recent)
     middle = messages[1:cut]
     if len(middle) < 2:
@@ -68,12 +76,16 @@ async def compact(messages: list[dict], llm, keep_recent: int) -> tuple[list[dic
     before = estimate_tokens(messages)
     transcript = render_for_summary(middle)
     try:
-        resp = await llm.chat(
-            [{"role": "system", "content": SUMMARY_PROMPT}, {"role": "user", "content": transcript[-12000:]}]
-        )
-        summary = resp.content.strip() or transcript[-1500:]
+        resp = await llm.ainvoke([SystemMessage(content=SUMMARY_PROMPT), HumanMessage(content=transcript[-12000:])])
+        summary = str(resp.content).strip() or transcript[-1500:]
     except Exception:
         summary = "Deterministic digest of earlier steps:\n" + transcript[-1500:]
-    summary_msg = {"role": "user", "content": f"[Summary of earlier investigation steps]\n{redact(summary)}"}
-    compacted = [messages[0], summary_msg, *messages[cut:]]
-    return compacted, {"dropped_messages": len(middle), "tokens_before": before, "tokens_after": estimate_tokens(compacted)}
+    summary_msg = HumanMessage(content=f"[Summary of earlier investigation steps]\n{redact(summary)}")
+    tail = [m.model_copy(update={"id": None}) for m in messages[cut:]]
+    after = [messages[0], summary_msg, *tail]
+    updates = [*(RemoveMessage(id=m.id) for m in messages[1:]), summary_msg, *tail]
+    return updates, {
+        "dropped_messages": len(middle),
+        "tokens_before": before,
+        "tokens_after": estimate_tokens(after),
+    }
