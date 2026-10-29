@@ -309,11 +309,7 @@ class AgentRuntime:
         last: AIMessage = state["messages"][-1]
         world = copy.deepcopy(state["world"])
 
-        prior: dict[str, int] = {}
-        for m in state["messages"]:
-            for c in getattr(m, "tool_calls", None) or []:
-                key = _sig(c["name"], _strip(c["args"])[0])
-                prior[key] = prior.get(key, 0) + 1
+        counts: dict[str, int] = world["state"].setdefault("call_counts", {})
 
         results: dict[str, str] = {}
         runnable, gated, finish = [], [], None
@@ -336,9 +332,12 @@ class AgentRuntime:
                     jsonschema.validate(args, tool.parameters)
                 except jsonschema.ValidationError as e:
                     err = f"invalid arguments: {e.message}"
-            if not err and call["name"] != "finish_incident" and prior.get(_sig(call["name"], args), 0) >= 2:
+            sig = _sig(call["name"], args)
+            if not err and call["name"] != "finish_incident" and counts.get(sig, 0) >= 1:
                 err = "you already made this exact call; the result will not change. Try a different approach or finish_incident."
                 self.store.add_event(run_id, "guard", {"kind": "repeated_call", "tool": call["name"], "args": args})
+            elif call["name"] != "finish_incident":
+                counts[sig] = counts.get(sig, 0) + 1
             if err:
                 self.store.add_event(run_id, "tool_error", {"call_id": call["id"], "tool": call["name"], "error": err})
                 results[call["id"]] = f"ERROR: {err}"

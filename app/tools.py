@@ -128,6 +128,7 @@ async def check_health(world: dict, args: dict) -> str:
 
 def _record_action(world: dict, tool: str, args: dict) -> bool:
     world["state"]["actions"].append({"tool": tool, "args": args})
+    world["state"]["call_counts"] = {}
     improved = fix_matches(world["scenario"], tool, args)
     if improved:
         world["state"]["fixed"] = True
