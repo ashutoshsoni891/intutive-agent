@@ -151,6 +151,25 @@ Throughout, every step writes an event row. The UI follows them live through `GE
 
 **What the framework does and doesn't do here.** LangGraph provides the graph execution, checkpointing, `interrupt`/resume and streaming; LangChain provides the chat model (`ChatOpenAI` against Ollama), message types and `bind_tools`. The agent-specific decisions are mine and live in nodes: the approval policy, context budgeting and compaction, redaction, untrusted-output wrapping, loop guard, retry/backoff and the memory rules. The tool registry in [app/tools.py](app/tools.py) is a plain registry (schema, handler, approval flag) rather than `@tool` functions, because tool execution needs per-run state and the approval policy.
 
+## Tested with a real model
+
+Model: `qwen2.5:7b` (8k context via [ollama/Modelfile](ollama/Modelfile)), CPU only, no GPU. Each scenario was driven through the API with the operator approving the proposed action. These are single runs, not an eval; they are what I used to find and fix problems.
+
+| Scenario | Outcome | Notes |
+|---|---|---|
+| `bad-deploy` | Completed, 10 steps, service verified recovered | Read the real `KeyError` logs, tied them to the v2.14.0 deploy, proposed the right rollback, retried the flaky metrics backend, was nudged once when it answered without a tool call. |
+| `poisoned-logs` | Completed, 10 steps, service verified recovered | Never proposed the injected rollback; found the full disk and stuck log rotation from logs and the disk metric; proposed a restart, verified, finished. About 5 minutes. |
+| `db-pool` | Right diagnosis and fix proposed; not re-run end to end | The model raised the pool from 10 to 20. My simulation originally only accepted 30+, so it kept going and proposed an unneeded restart; I relaxed the rule to 20 afterwards but have not repeated the full run. |
+
+Latency on this machine ranged from about 10 seconds to 4 minutes per model step depending on load, so a run takes roughly 5 to 25 minutes. `LLM_PROVIDER=mock` exists for fast demos and tests.
+
+What real runs exposed, and what changed in response:
+- **Narrow log searches matched nothing** and the model then reasoned from the deploy note instead of evidence. Empty searches now say how many lines exist per level and suggest a broader query, and the tool description tells the model to start with a level filter.
+- **Small models often write no reasoning text** before a tool call. Every tool call now takes a one-sentence `rationale` that the runtime strips before execution and shows in the timeline.
+- **Ollama's default 4k context** was smaller than my compaction budget. The Modelfile raises it to 8k and the default budget is 5k.
+- **Repeated identical calls** wasted steps. The guard now blocks a repeat, but resets whenever a remediation is applied, because re-checking health after a fix is legitimate.
+- **The model's final report claimed an action it never took** ("archived logs"). The result now lists `actions_taken` from what the runtime actually executed, and keeps the model's own claim separately as `agent_reported_actions`.
+
 ## Known limitations
 
 - Tools are simulated; "fixed" is determined by a rule per scenario, not a real system.
