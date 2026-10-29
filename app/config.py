@@ -10,7 +10,7 @@ def _env(name: str, default: str) -> str:
 class Settings:
     llm_provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "ollama"))
     llm_base_url: str = field(default_factory=lambda: _env("LLM_BASE_URL", "http://localhost:11434/v1"))
-    llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "qwen2.5:7b"))
+    llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "qwen2.5-7b-8k"))
     llm_api_key: str = field(default_factory=lambda: _env("LLM_API_KEY", "ollama"))
     llm_timeout_s: float = field(default_factory=lambda: float(_env("LLM_TIMEOUT_S", "300")))
 
@@ -18,7 +18,7 @@ class Settings:
 
     max_steps: int = field(default_factory=lambda: int(_env("MAX_STEPS", "20")))
     run_token_budget: int = field(default_factory=lambda: int(_env("RUN_TOKEN_BUDGET", "80000")))
-    context_budget_tokens: int = field(default_factory=lambda: int(_env("CONTEXT_BUDGET_TOKENS", "6000")))
+    context_budget_tokens: int = field(default_factory=lambda: int(_env("CONTEXT_BUDGET_TOKENS", "5000")))
     compaction_keep_recent: int = 6
     tool_output_limit: int = field(default_factory=lambda: int(_env("TOOL_OUTPUT_LIMIT", "2000")))
 

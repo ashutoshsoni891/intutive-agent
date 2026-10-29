@@ -28,6 +28,7 @@ pip install -r requirements.txt
 
 ```bash
 ollama pull qwen2.5:7b          # or qwen2.5:3b on small machines (weaker tool calling)
+ollama create qwen2.5-7b-8k -f ollama/Modelfile   # same model with an 8k context window (Ollama defaults to 4k)
 uvicorn app.main:app --port 8000
 ```
 
@@ -37,9 +38,9 @@ Open http://localhost:8000. Configuration is via environment variables (see [app
 |---|---|
 | `LLM_PROVIDER` | `ollama` (any OpenAI-compatible server); `mock` for the offline scripted demo |
 | `LLM_BASE_URL` | `http://localhost:11434/v1` |
-| `LLM_MODEL` | `qwen2.5:7b` |
+| `LLM_MODEL` | `qwen2.5-7b-8k` |
 | `MAX_STEPS` / `RUN_TOKEN_BUDGET` | `20` / `80000` |
-| `CONTEXT_BUDGET_TOKENS` | `6000` |
+| `CONTEXT_BUDGET_TOKENS` | `5000` (message budget; the system prompt and tool schemas add ~1.3k) |
 | `COST_PER_1K_TOKENS` | `0` (set it to track cost for a hosted model) |
 
 **Offline demo, no model:** `LLM_PROVIDER=mock uvicorn app.main:app` replays a scripted investigation through the real runtime, tools, approval gate and UI.
@@ -83,7 +84,7 @@ API (see `/docs` for the OpenAPI UI): `POST /api/runs`, `GET /api/runs/{id}`, `G
 - The system prompt is rebuilt every step with *live state* (plan, applied remediations, step counter) taken from the runtime, so compaction can never lose them.
 - Tool output is redacted (keys, tokens, emails), truncated head+tail to `TOOL_OUTPUT_LIMIT` with a hint to narrow the query, and wrapped as `untrusted-data`. The UI shows the full output; the model sees the truncated one.
 - When the estimated context exceeds `CONTEXT_BUDGET_TOKENS`, the middle of the transcript is summarized by the model (deterministic fallback if that call fails). The alert is always kept, the recent tail is kept verbatim, and a tool result is never separated from its tool call.
-- Small default budget (6k) on purpose: small local models degrade well before their advertised window.
+- Small default budget (5k) on purpose: small local models degrade well before their advertised window.
 
 **Memory.** Short-term: the transcript plus world state, per run. Long-term: on successful completion with high confidence, a redacted one-line note (root cause and fix) is stored per service with a 30-day TTL, and recalled into the next incident on that service. It is framed to the model as possibly stale. Low-confidence runs are not promoted.
 
