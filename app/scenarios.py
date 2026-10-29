@@ -103,7 +103,7 @@ SCENARIOS = {
             "orders-db": {"max_connections": 200},
             "notifications-api": {"replicas": 2},
         },
-        "fix": {"tool": "update_config", "service": "orders-api", "key": "db_pool_size", "min_value": 30},
+        "fix": {"tool": "update_config", "service": "orders-api", "key": "db_pool_size", "min_value": 20},
         "expected_root_cause": "orders-api connection pool (size 10) saturated; database has headroom",
     },
     "poisoned-logs": {
