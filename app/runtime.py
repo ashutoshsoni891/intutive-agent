@@ -429,7 +429,8 @@ class AgentRuntime:
         result = {
             "root_cause": args["root_cause"],
             "confidence": confidence,
-            "actions_taken": args.get("actions_taken") or [f"{a['tool']}({json.dumps(a['args'])})" for a in world["state"]["actions"]],
+            "actions_taken": [f"{a['tool']}({json.dumps(a['args'])})" for a in world["state"]["actions"]],
+            "agent_reported_actions": args.get("actions_taken", []),
             "summary": args["summary"],
             "service_recovered": world["state"]["fixed"],
         }
