@@ -336,8 +336,8 @@ class AgentRuntime:
                     jsonschema.validate(args, tool.parameters)
                 except jsonschema.ValidationError as e:
                     err = f"invalid arguments: {e.message}"
-            if not err and call["name"] != "finish_incident" and prior.get(_sig(call["name"], args), 0) >= 3:
-                err = "you already made this exact call twice with the same result. Try a different approach or finish_incident."
+            if not err and call["name"] != "finish_incident" and prior.get(_sig(call["name"], args), 0) >= 2:
+                err = "you already made this exact call; the result will not change. Try a different approach or finish_incident."
                 self.store.add_event(run_id, "guard", {"kind": "repeated_call", "tool": call["name"], "args": args})
             if err:
                 self.store.add_event(run_id, "tool_error", {"call_id": call["id"], "tool": call["name"], "error": err})
