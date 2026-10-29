@@ -4,6 +4,29 @@ An autonomous agent that triages production incidents: it reads an alert, plans 
 
 Python 3.11+, FastAPI, **LangGraph** (agent graph, checkpointing, human-in-the-loop interrupts) and **LangChain** (model and message abstractions), with any OpenAI-compatible open-source model server (Ollama by default). The graph is defined in [app/runtime.py](app/runtime.py).
 
+## Screenshots
+
+Captured in offline demo mode (`LLM_PROVIDER=mock`), which replays a scripted investigation through the real runtime, tools, approval gate and UI. Real-model runs look the same but take minutes per step on CPU.
+
+| | |
+|---|---|
+| ![Start](assets/screenshots/01-start.png) **Start a run.** Pick a scenario; the alert the agent receives is shown. | ![Approval gate](assets/screenshots/02-approval-gate.png) **Approval gate.** The agent proposes a rollback; the run is parked until the operator decides. The plan, stats and live timeline (reasoning, tool calls, results, retry) are visible. |
+| ![Completed](assets/screenshots/03-completed.png) **Completed.** Root cause, confidence, applied action and the note saved to long-term memory. | ![Injection](assets/screenshots/04-injection-ignored.png) **Prompt injection.** A log line carries an injected instruction; it is shown as inert data, the secret is redacted, and the agent's reasoning rejects it. |
+
+## Tech stack
+
+| Layer | Choice | Why |
+|---|---|---|
+| Language | Python 3.11+ (developed on 3.14) | Async-first, strong LLM ecosystem |
+| Agent orchestration | LangGraph (`StateGraph`, `interrupt`, `Command`) | Explicit state machine, checkpointing, resumable human-in-the-loop |
+| LLM interface | LangChain (`ChatOpenAI`, message types, `bind_tools`) | Provider-neutral tool calling |
+| Model | Qwen 2.5 7B served by Ollama (open source, local, CPU) | Any OpenAI-compatible server works (vLLM, llama.cpp, LM Studio) |
+| Backend API | FastAPI + Uvicorn, Server-Sent Events | Async, typed, simple streaming to the UI |
+| Persistence | SQLite: LangGraph checkpointer plus app tables | Zero-setup local durability |
+| Validation | `jsonschema` against each tool's schema | Bad model arguments become recoverable errors |
+| Frontend | Vanilla HTML/CSS/JS, no build step | Small, safe rendering (`textContent` only) |
+| Testing | pytest + pytest-asyncio, Playwright for browser flows | Scripted chat model makes the agent deterministic |
+
 ## Why incident triage
 
 It is a task where autonomy has real value (the investigation path depends on what each tool returns), where wrong actions are costly (so approval gates matter), and where state genuinely has to survive (incidents outlive processes and shifts). Tools run against simulated systems so the project is self-contained, but the tool interfaces are the real seam: swap the handlers in [app/tools.py](app/tools.py) for Datadog/kubectl/Argo calls and nothing else changes.
@@ -73,6 +96,40 @@ START -> ingest -> agent --(tool calls)--> tools --(gated calls)--> approval (in
 `ingest` folds in operator messages and compacts the context; `agent` calls the model with the tool schemas; `tools` validates and runs safe calls in parallel and parks gated ones; `approval` calls LangGraph's `interrupt()` and waits for the operator.
 
 API (see `/docs` for the OpenAPI UI): `POST /api/runs`, `GET /api/runs/{id}`, `GET /api/runs/{id}/stream` (SSE, resumable via `Last-Event-ID`), `POST /api/runs/{id}/{pause|resume|cancel|message}`, `POST /api/approvals/{id}`, `GET /api/tools`, `GET /api/memories`.
+
+## App flow
+
+What happens from the operator's click to a finished incident:
+
+```
+1. Operator picks a scenario            POST /api/runs
+2. Runtime creates the run              recalls past notes for the service, builds the opening
+                                        message (alert + goal + notes), stores the run, starts
+                                        an asyncio task, and returns immediately
+3. Graph starts                         ingest -> agent
+4. agent                                the model sees: system rules + live state (plan, fixes
+                                        applied, step N/20) + conversation; it replies with
+                                        reasoning and tool_calls
+5. tools                                each call is schema-validated and guarded; safe calls run
+                                        in parallel with retry/backoff; output is redacted,
+                                        truncated and wrapped as untrusted data, then returned to
+                                        the model as a ToolMessage
+6. Loop 4-5                             the model reads results, plans, calls more tools
+7. Production-changing call             parked as an approval; graph hits interrupt(); state is
+                                        checkpointed; run status = awaiting_approval; the task exits
+8. Operator decides                     POST /api/approvals/{id}; the graph resumes with
+                                        Command(resume=...): approved -> executed, rejected -> the
+                                        reason goes back to the model
+9. Verify and finish                    the agent calls check_health, then finish_incident
+10. finalize                            status completed (or needs_review if confidence < 0.6);
+                                        a redacted note is saved to long-term memory
+```
+
+Throughout, every step writes an event row. The UI follows them live through `GET /api/runs/{id}/stream` (SSE), so the operator sees reasoning, tool calls, results, retries, guards, compactions and approvals as they happen. Pause, cancel and operator messages are applied at node boundaries.
+
+**Tool calling.** Tools are registered with a name, description, JSON schema, handler and an approval flag. `bind_tools` sends the schemas to the model; the model only *requests* calls. The runtime executes them, so validation, retries, timeouts, redaction and the approval gate sit between the model and anything that happens. Every tool also takes a one-sentence `rationale`, which the runtime strips before execution and shows as the agent's reason.
+
+**What the model sees each step.** System rules and live state, the alert and recalled notes, its own prior messages and tool results (truncated, redacted, untrusted-wrapped), any operator messages, and a summary in place of older steps once the context budget is exceeded.
 
 ## Design decisions
 
